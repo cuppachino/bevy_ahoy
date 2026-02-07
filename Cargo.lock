@@ -187,9 +187,9 @@ checksum = "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
 
 [[package]]
 name = "anyhow"
-version = "1.0.100"
+version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
+checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
 name = "approx"
@@ -341,7 +341,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "avian3d"
 version = "0.6.0-dev"
-source = "git+https://github.com/avianphysics/avian#4e0c808823b6d6d2b347dd2fc743c97966e9dc26"
+source = "git+https://github.com/avianphysics/avian#309be19b8b5f468112f73824566e7898e18b4bd2"
 dependencies = [
  "approx",
  "avian_derive",
@@ -352,6 +352,7 @@ dependencies = [
  "bitflags 2.10.0",
  "derive_more",
  "disqualified",
+ "glam 0.31.0",
  "glam_matrix_extras",
  "itertools 0.14.0",
  "obvhs",
@@ -365,7 +366,7 @@ dependencies = [
 [[package]]
 name = "avian_derive"
 version = "0.2.2"
-source = "git+https://github.com/avianphysics/avian#4e0c808823b6d6d2b347dd2fc743c97966e9dc26"
+source = "git+https://github.com/avianphysics/avian#309be19b8b5f468112f73824566e7898e18b4bd2"
 dependencies = [
  "proc-macro-error2",
  "proc-macro2",
@@ -808,9 +809,9 @@ dependencies = [
 
 [[package]]
 name = "bevy_enhanced_input"
-version = "0.23.1"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1843a33db32fea7721ba86cfab4b4a699ac64acbb02e1b1514b7bf51ca603d7"
+checksum = "c3eb80814d4c89323dd5489a6e85e5f83ea0d62127541822e2978d7b2c81b9d7"
 dependencies = [
  "bevy",
  "bevy_enhanced_input_macros",
@@ -1659,7 +1660,7 @@ dependencies = [
 [[package]]
 name = "bevy_trenchbroom"
 version = "0.12.0"
-source = "git+https://github.com/janhohenheim/bevy_trenchbroom?branch=avian-0.6#dd6330b9e1509f985d101d3df905cec34a2b3063"
+source = "git+https://github.com/janhohenheim/bevy_trenchbroom?branch=avian-0.6#bc629173c27608e0d3f06225641510cca2cad949"
 dependencies = [
  "anyhow",
  "atomicow",
@@ -1689,7 +1690,7 @@ dependencies = [
 [[package]]
 name = "bevy_trenchbroom_avian"
 version = "0.13.0-dev"
-source = "git+https://github.com/janhohenheim/bevy_trenchbroom?branch=avian-0.6#dd6330b9e1509f985d101d3df905cec34a2b3063"
+source = "git+https://github.com/janhohenheim/bevy_trenchbroom?branch=avian-0.6#bc629173c27608e0d3f06225641510cca2cad949"
 dependencies = [
  "avian3d",
  "bevy",
@@ -1699,7 +1700,7 @@ dependencies = [
 [[package]]
 name = "bevy_trenchbroom_macros"
 version = "0.12.0"
-source = "git+https://github.com/janhohenheim/bevy_trenchbroom?branch=avian-0.6#dd6330b9e1509f985d101d3df905cec34a2b3063"
+source = "git+https://github.com/janhohenheim/bevy_trenchbroom?branch=avian-0.6#bc629173c27608e0d3f06225641510cca2cad949"
 dependencies = [
  "deluxe",
  "heck 0.5.0",
@@ -3709,9 +3710,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.7.6"
+version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "memmap2"
@@ -6896,18 +6897,18 @@ checksum = "6df3dc4292935e51816d896edcd52aa30bc297907c26167fec31e2b0c6a32524"
 
 [[package]]
 name = "zerocopy"
-version = "0.8.38"
+version = "0.8.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57cf3aa6855b23711ee9852dfc97dfaa51c45feaba5b645d0c777414d494a961"
+checksum = "db6d35d663eadb6c932438e763b262fe1a70987f9ae936e60158176d710cae4a"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.38"
+version = "0.8.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a616990af1a287837c4fe6596ad77ef57948f787e46ce28e166facc0cc1cb75"
+checksum = "4122cd3169e94605190e77839c9a40d40ed048d305bfdc146e7df40ab0f3e517"
 dependencies = [
  "proc-macro2",
  "quote",

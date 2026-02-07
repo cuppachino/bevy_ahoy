@@ -1335,7 +1335,7 @@ fn is_intersecting(move_and_slide: &MoveAndSlide, waters: &Query<Entity>, ctx: &
     // No need to worry about skin width, depenetration will take care of it.
     // If we used skin width, we could not stand up if we are closer than skin width to the ground,
     // which happens when going under a slope.
-    move_and_slide.query_pipeline.shape_intersections_callback(
+    move_and_slide.spatial_query.shape_intersections_callback(
         ctx.derived.collider(&ctx.state),
         ctx.transform.translation,
         ctx.transform.rotation,
