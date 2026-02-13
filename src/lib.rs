@@ -135,7 +135,9 @@ pub enum AhoySystems {
     ApplyForcesToDynamicRigidBodies,
 }
 
-#[derive(Component, Clone, Reflect, Debug)]
+#[derive(Component, Clone, Reflect, PartialEq, Debug)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
 #[reflect(Component)]
 #[require(
     AccumulatedInput,
@@ -287,7 +289,9 @@ impl CharacterController {
 /// The look direction for the character.
 ///
 /// Usually, this is populated by the camera.
-#[derive(Component, Clone, Reflect, Debug, Default)]
+#[derive(Component, Clone, Reflect, PartialEq, Debug, Default)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
 #[reflect(Component)]
 pub struct CharacterLook {
     /// The yaw the character is looking at (relative to the world).
@@ -376,7 +380,9 @@ fn setup_collider(
     derived.hand_collider = Collider::from(cfg.min_ledge_grab_space);
 }
 
-#[derive(Component, Clone, Reflect, Debug)]
+#[derive(Component, Clone, Reflect, PartialEq, Debug)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
 #[reflect(Component)]
 pub struct CharacterControllerState {
     pub orientation: Quat,
@@ -420,7 +426,8 @@ impl Default for CharacterControllerState {
 }
 
 /// The state of a mantle in progress.
-#[derive(Clone, Reflect, Debug)]
+#[derive(Clone, Reflect, PartialEq, Debug)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
 pub struct MantleState {
     pub height_left: f32,
 }
@@ -433,6 +440,7 @@ fn max_stopwatch() -> Stopwatch {
 
 /// Properties derived for a [`CharacterController`] that are constant for a character.
 #[derive(Component, Clone, Debug, Default)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
 pub struct CharacterControllerDerivedProps {
     /// The collider for the primary movement used when the character is standing.
     pub standing_collider: Collider,
@@ -523,6 +531,9 @@ impl CharacterControllerDerivedProps {
 /// exclusively an output). For example, while "crouching" is technically a result of movement, it
 /// is also used as input in the next frame.
 #[derive(Component, Reflect, PartialEq, Debug, Default)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
+#[reflect(Component)]
 pub struct CharacterControllerOutput {
     /// Details about an in progress mantle.
     ///
@@ -536,6 +547,8 @@ pub struct CharacterControllerOutput {
 ///
 /// These are properties about the mantle that are transient and are not needed for future updates.
 #[derive(Clone, Reflect, PartialEq, Debug)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
 pub struct MantleOutput {
     /// The normal of the wall being mantled.
     pub wall_normal: Dir3,
@@ -547,6 +560,8 @@ pub struct MantleOutput {
 
 /// Data related to a hit during [`MoveAndSlide::move_and_slide`].
 #[derive(Clone, Reflect, PartialEq, Debug)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
 pub struct TouchingEntity {
     /// The entity of the collider that was hit by the shape.
     pub entity: Entity,
