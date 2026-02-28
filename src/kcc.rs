@@ -9,6 +9,7 @@ use bevy_ecs::{
     schedule::ScheduleLabel,
     system::lifetimeless::{Read, Write},
 };
+use bevy_math::Affine3A;
 use core::fmt::Debug;
 use core::time::Duration;
 use std::sync::Arc;
@@ -132,36 +133,6 @@ impl CtxItem<'_, '_> {
         };
         Some(transform)
     }
-
-    fn rigid_body_global_transform(&self) -> Transform {
-        Transform {
-            translation: self.position.0,
-            rotation: self.rotation.0,
-            scale: Vec3::ONE,
-        }
-    }
-
-    fn update_global_transform(
-        &mut self,
-        collider_transform: Transform,
-        physics_transforms: &Query<(&Position, &Rotation)>,
-    ) {
-        let old_collider_transform = self
-            .collider_global_transform(physics_transforms)
-            .expect("Should have already early returned if this fails");
-        let old_rb_transform = self.rigid_body_global_transform();
-        // Not using `Transform` as that would only work with *direct* children, not distant descendants
-        let collider_local_transform =
-            old_rb_transform.compute_affine().inverse() * old_collider_transform.compute_affine();
-        let new_rb_transform =
-            collider_transform.compute_affine() * collider_local_transform.inverse();
-        let (scale, rotation, translation) = new_rb_transform.to_scale_rotation_translation();
-        *self.transform = Transform {
-            translation,
-            rotation,
-            scale,
-        };
-    }
 }
 
 #[derive(QueryData)]
@@ -202,6 +173,7 @@ fn run_kcc(
             error!("Cannot update KCC: The collider is in a corrupt state. Skipping.");
             continue;
         };
+        let original_transform = transform;
 
         ctx.output.mantle = None;
         ctx.output.touching_entities.clear();
@@ -337,7 +309,18 @@ fn run_kcc(
             ctx.state.last_ground.reset();
         }
         // TODO: check_falling();
-        ctx.update_global_transform(transform, &physics_transforms);
+
+        let movement = original_transform.compute_affine().inverse() * transform.compute_affine();
+        *ctx.transform = affine_to_transform(ctx.transform.compute_affine() * movement);
+    }
+}
+
+fn affine_to_transform(affine: Affine3A) -> Transform {
+    let (scale, rotation, translation) = affine.to_scale_rotation_translation();
+    Transform {
+        translation,
+        rotation,
+        scale,
     }
 }
 
