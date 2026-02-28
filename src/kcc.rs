@@ -44,31 +44,49 @@ struct Ctx {
 }
 
 impl CtxItem<'_, '_> {
-    fn global_transform(&self, collider_transform: Transform) -> GlobalTransform {
-        GlobalTransform::from(
-            Transform {
-                translation: **self.position,
-                rotation: **self.rotation,
-                scale: Vec3::ONE,
-            }
-            .compute_affine()
-                * collider_transform.compute_affine(),
-        )
+    fn collider_global_transform(
+        &self,
+        physics_transforms: &Query<(&Position, &Rotation)>,
+    ) -> Option<Transform> {
+        let collider = self.colliders.iter().next()?;
+
+        let (position, rotation) = physics_transforms.get(collider).ok()?;
+        let transform = Transform {
+            translation: position.0,
+            rotation: rotation.0,
+            scale: Vec3::ONE,
+        };
+        Some(transform)
     }
 
-    fn update_global_transform(&mut self, transform: Transform, collider_transform: Transform) {
-        let rb_transform =
-            transform.compute_affine() * collider_transform.compute_affine().inverse();
-        let parent = self.global_transform(Transform::IDENTITY).affine()
-            * GlobalTransform::from(*self.transform).affine().inverse();
-        let (scale, rotation, translation) = parent.to_scale_rotation_translation();
-        let parent = GlobalTransform::from(Transform {
-            scale,
-            rotation,
+    fn rigid_body_global_transform(&self) -> Transform {
+        Transform {
+            translation: self.position.0,
+            rotation: self.rotation.0,
+            scale: Vec3::ONE,
+        }
+    }
+
+    fn update_global_transform(
+        &mut self,
+        collider_transform: Transform,
+        physics_transforms: &Query<(&Position, &Rotation)>,
+    ) {
+        let old_collider_transform = self
+            .collider_global_transform(physics_transforms)
+            .expect("Should have already early returned if this fails");
+        let old_rb_transform = self.rigid_body_global_transform();
+        // Not using `Transform` as that would only work with *direct* children, not distant descendants
+        let collider_local_transform =
+            old_rb_transform.compute_affine().inverse() * old_collider_transform.compute_affine();
+        let new_rb_transform =
+            collider_transform.compute_affine() * collider_local_transform.inverse();
+        let (scale, rotation, translation) = new_rb_transform.to_scale_rotation_translation();
+        *self.transform = Transform {
             translation,
-        });
-        let local_transform = GlobalTransform::from(rb_transform).reparented_to(&parent);
-        *self.transform = local_transform;
+            rotation,
+            scale,
+        };
     }
 }
 
@@ -100,22 +118,18 @@ fn run_kcc(
     rigid_bodies: Query<RigidBodyComponents>,
     waters: Query<Entity, With<Water>>,
     default_friction: Res<DefaultFriction>,
+    physics_transforms: Query<(&Position, &Rotation)>,
 ) {
     let mut colliders = colliders.transmute_lens_inner();
     let colliders = colliders.query();
     let mut waters = waters.transmute_lens_inner();
     let waters = waters.query();
     for mut ctx in &mut kccs {
-        let Some(collider) = ctx.colliders.iter().next() else {
-            error!("Cannot update KCC without a collider");
+        let Some(mut transform) = ctx.collider_global_transform(&physics_transforms) else {
+            error!("Cannot update KCC: The collider is in a corrupt state. Skipping.");
             continue;
         };
-        let collider_transform = if ctx.entity == collider {
-            Transform::IDENTITY
-        } else {
-            transforms.get(collider).copied().unwrap_or_default()
-        };
-        let mut transform = ctx.global_transform(collider_transform).compute_transform();
+        dbg!(transform.translation);
 
         ctx.output.mantle = None;
         ctx.output.touching_entities.clear();
@@ -251,7 +265,7 @@ fn run_kcc(
             ctx.state.last_ground.reset();
         }
         // TODO: check_falling();
-        ctx.update_global_transform(transform, collider_transform);
+        ctx.update_global_transform(transform, &physics_transforms);
     }
 }
 
