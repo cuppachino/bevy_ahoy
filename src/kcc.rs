@@ -1,12 +1,17 @@
-use avian3d::character_controller::move_and_slide::MoveHitData;
+use avian3d::{
+    character_controller::move_and_slide::MoveHitData,
+    parry::shape::{Capsule, SharedShape},
+};
 use bevy_ecs::{
     intern::Interned,
     query::QueryData,
+    relationship::RelationshipSourceCollection,
     schedule::ScheduleLabel,
     system::lifetimeless::{Read, Write},
 };
 use core::fmt::Debug;
 use core::time::Duration;
+use std::sync::Arc;
 use tracing::{error, warn};
 
 use crate::{
@@ -21,7 +26,76 @@ pub struct AhoyKccPlugin {
 impl Plugin for AhoyKccPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(self.schedule, run_kcc.in_set(AhoySystems::MoveCharacters))
-            .add_systems(Update, (spin_character_look,));
+            .add_systems(Update, (spin_character_look,))
+            .add_systems(PreUpdate, setup_collider);
+    }
+}
+
+#[derive(Component, Debug)]
+struct CharacterControllerDone;
+
+fn setup_collider(
+    mut commands: Commands,
+    mut kccs: Query<
+        (
+            Entity,
+            &mut CharacterController,
+            &mut CharacterControllerDerivedProps,
+            &RigidBodyColliders,
+        ),
+        Without<CharacterControllerDone>,
+    >,
+    colliders: Query<&Collider>,
+) {
+    for (entity, mut cfg, mut derived, collider_entities) in kccs.iter_mut() {
+        if collider_entities.len() > 1 {
+            warn!(
+                "A CharacterController is expected to only have one collider, but found more. Picking the first one. This will probably be an arbitrary collider you didn't expect."
+            );
+        }
+        // Relationships are guaranteed to not be empty
+        let collider_entity = collider_entities[0];
+        let Ok(collider) = colliders.get(collider_entity) else {
+            error!(
+                "Failed to set up collider for KCC: failed to query collider. Is it `Disabled`?"
+            );
+            return;
+        };
+        cfg.filter.excluded_entities.add(collider_entity);
+
+        let standing_aabb = collider.aabb(default(), Rotation::default());
+        let standing_height = standing_aabb.max.y - standing_aabb.min.y;
+
+        derived.standing_collider = collider.clone();
+
+        let frac = cfg.crouch_height / standing_height;
+
+        let mut crouching_collider = Collider::from(SharedShape(Arc::from(
+            derived.standing_collider.shape().clone_dyn(),
+        )));
+
+        if crouching_collider.shape().as_capsule().is_some() {
+            let capsule = crouching_collider
+                .shape_mut()
+                .make_mut()
+                .as_capsule_mut()
+                .unwrap();
+            let radius = capsule.radius;
+            let new_height = (cfg.crouch_height - radius).max(0.0);
+            *capsule = Capsule::new_y(new_height / 2.0, radius);
+        } else {
+            // note: well-behaved shapes like cylinders and cuboids will not actually subdivide when scaled, yay
+            crouching_collider.set_scale(vec3(1.0, frac, 1.0), 16);
+        }
+
+        derived.crouching_collider = Collider::compound(vec![(
+            Vec3::Y * (cfg.crouch_height - standing_height) / 2.0,
+            Rotation::default(),
+            crouching_collider,
+        )]);
+
+        derived.hand_collider = Collider::from(cfg.min_ledge_grab_space);
+        commands.entity(entity).insert(CharacterControllerDone);
     }
 }
 
