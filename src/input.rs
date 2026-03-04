@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 #[cfg(feature = "pickup")]
 use avian_pickup::input::{AvianPickupAction, AvianPickupInput};
 use bevy_time::Stopwatch;
@@ -13,7 +15,8 @@ pub struct AhoyInputPlugin;
 impl Plugin for AhoyInputPlugin {
     fn build(&self, app: &mut App) {
         app.add_observer(apply_movement)
-            .add_observer(apply_jump)
+            .add_observer(start_jump)
+            .add_observer(release_jump)
             .add_observer(apply_global_movement)
             .add_observer(apply_tac)
             .add_observer(apply_crouch)
@@ -103,8 +106,8 @@ pub struct ThrowObject;
 pub struct AccumulatedInput {
     // The last non-zero move that was input since the last fixed update loop
     pub last_movement: Option<Vec2>,
-    // Time since the last jump input. Will be `None` once the jump was processed.
-    pub jumped: Option<Stopwatch>,
+    // The current jump state. Is `None` if not jumping.
+    pub jump_phase: Option<JumpPhase>,
     // Whether any frame since the last fixed update loop input a swim up
     pub swim_up: bool,
     // Time since the last tac input. Will be `None` once the tac was processed.
@@ -114,6 +117,58 @@ pub struct AccumulatedInput {
     pub craned: Option<Stopwatch>,
     pub mantled: Option<Stopwatch>,
     pub climbdown: Option<Stopwatch>,
+}
+
+/// The current phase of a jump input. Used to process variable jump heights.
+#[derive(Clone, Debug, PartialEq, Reflect)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
+pub enum JumpPhase {
+    /// Queued jump that hasn't been processed yet. The first time the kcc system sees this state,
+    /// it will apply the initial jump impulse and transition to either [`Hold`] or [`Release`]
+    /// depending on whether the jump input is still held.
+    ///
+    /// [`Hold`]: Self::Hold
+    /// [`Release`]: Self::Release
+    Start {
+        /// Time since the last jump input.
+        stopwatch: Stopwatch,
+        /// True if the jump has been released but hasn't been processed yet.
+        ///
+        /// This is used to prevent getting stuck in a [`Hold`] state after executing a buffered
+        /// tap jump while in the air.
+        ///
+        /// [`Hold`]: Self::Hold
+        needs_release: bool,
+    },
+    /// The jump is held. No continuous velocity is applied while in this state.
+    Hold,
+    /// The jump has been released but may need a downward impulse.
+    Release,
+}
+
+impl Default for JumpPhase {
+    fn default() -> Self {
+        Self::Start {
+            stopwatch: Stopwatch::new(),
+            needs_release: false,
+        }
+    }
+}
+
+impl JumpPhase {
+    /// Tick the internal stopwatch if the jump is in the [`Start`] phase.
+    ///
+    /// [`Start`]: Self::Start
+    #[inline]
+    pub fn tick(&mut self, delta: Duration) {
+        match self {
+            JumpPhase::Start { stopwatch, .. } => {
+                stopwatch.tick(delta);
+            }
+            JumpPhase::Hold | JumpPhase::Release => {}
+        }
+    }
 }
 
 fn apply_movement(
@@ -139,9 +194,38 @@ fn apply_global_movement(
     }
 }
 
-fn apply_jump(jump: On<Fire<Jump>>, mut accumulated_inputs: Query<&mut AccumulatedInput>) {
+fn start_jump(jump: On<Start<Jump>>, mut accumulated_inputs: Query<&mut AccumulatedInput>) {
     if let Ok(mut accumulated_inputs) = accumulated_inputs.get_mut(jump.context) {
-        accumulated_inputs.jumped = Some(Stopwatch::new());
+        accumulated_inputs.jump_phase = Some(JumpPhase::default());
+        /* match accumulated_inputs.jump_phase.as_mut() {
+            Some(JumpPhase::Start { needs_release, .. }) if *needs_release => {
+                *needs_release = false;
+            }
+            Some(_) => {
+                return;
+            }
+            None => {
+                accumulated_inputs.jump_phase = Some(JumpPhase::default());
+            }
+        } */
+    }
+}
+
+fn release_jump(jump: On<Complete<Jump>>, mut accumulated_inputs: Query<&mut AccumulatedInput>) {
+    if let Ok(mut accumulated_inputs) = accumulated_inputs.get_mut(jump.context) {
+        let Some(phase) = &mut accumulated_inputs.jump_phase else {
+            return;
+        };
+
+        match phase {
+            JumpPhase::Start { needs_release, .. } => {
+                *needs_release = true;
+            }
+            JumpPhase::Hold => {
+                *phase = JumpPhase::Release;
+            }
+            JumpPhase::Release => {}
+        }
     }
 }
 
@@ -239,21 +323,21 @@ fn clear_accumulated_input(mut accumulated_inputs: Query<&mut AccumulatedInput>)
     for mut accumulated_input in &mut accumulated_inputs {
         *accumulated_input = AccumulatedInput {
             last_movement: default(),
-            jumped: accumulated_input.jumped.clone(),
+            jump_phase: accumulated_input.jump_phase.clone(),
             swim_up: default(),
             tac: accumulated_input.tac.clone(),
             craned: accumulated_input.craned.clone(),
             mantled: accumulated_input.mantled.clone(),
             crouched: default(),
             climbdown: accumulated_input.climbdown.clone(),
-        }
+        };
     }
 }
 
 fn tick_timers(mut inputs: Query<&mut AccumulatedInput>, time: Res<Time>) {
     for mut input in inputs.iter_mut() {
-        if let Some(jumped) = input.jumped.as_mut() {
-            jumped.tick(time.delta());
+        if let Some(jump_phase) = input.jump_phase.as_mut() {
+            jump_phase.tick(time.delta());
         }
         if let Some(tac) = input.tac.as_mut() {
             tac.tick(time.delta());

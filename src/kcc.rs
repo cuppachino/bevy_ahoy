@@ -17,7 +17,9 @@ use tracing::{error, warn};
 
 use crate::{
     CharacterControllerDerivedProps, CharacterControllerOutput, CharacterControllerState,
-    CharacterLook, MantleOutput, MantleState, input::AccumulatedInput, prelude::*,
+    CharacterLook, MantleOutput, MantleState,
+    input::{AccumulatedInput, JumpPhase},
+    prelude::*,
 };
 
 pub struct AhoyKccPlugin {
@@ -744,7 +746,7 @@ fn update_crane_state(
 
     ctx.input.craned = None;
     // Ensure we don't immediately jump on the surface if crane and jump are bound to the same key
-    ctx.input.jumped = None;
+    ctx.input.jump_phase = None;
     ctx.input.mantled = None;
     ctx.input.tac = None;
 
@@ -913,7 +915,7 @@ fn update_mantle_state(
     ctx.input.craned = None;
     ctx.input.mantled = None;
     // Ensure we don't immediately jump on the surface if mantle and jump are bound to the same key
-    ctx.input.jumped = None;
+    ctx.input.jump_phase = None;
 
     ctx.state.mantle = Some(mantle_state);
     ctx.output.mantle = Some(mantle_output);
@@ -1083,7 +1085,7 @@ fn handle_climbdown(
 
     ctx.input.craned = None;
     ctx.input.mantled = None;
-    ctx.input.jumped = None;
+    ctx.input.jump_phase = None;
     ctx.input.climbdown = None;
 
     ctx.state.mantle = Some(mantle_state);
@@ -1432,7 +1434,7 @@ fn handle_ledge_jump_dir(ctx: &mut CtxItem) -> Option<Vec3> {
             .mantled
             .as_ref()
             .is_some_and(|m| m.elapsed() < ctx.cfg.mantle_input_buffer)
-        || ctx.input.jumped.is_none()
+        || ctx.input.jump_phase.is_none()
     {
         return None;
     }
@@ -1455,49 +1457,108 @@ fn handle_jump(
     ctx: &mut CtxItem,
     transform: &mut Transform,
 ) {
-    // Handle tic tacs when we're in the air beyond coyote-time.
-    let jumpdir =
-        if ctx.state.grounded.is_none() && ctx.state.last_ground.elapsed() > ctx.cfg.coyote_time {
-            if let Some(tac_dir) = handle_tac(wish_velocity, time, move_and_slide, ctx, transform) {
-                tac_dir
-            } else if let Some(ledge_jump_dir) = handle_ledge_jump_dir(ctx) {
-                ledge_jump_dir
-            } else {
-                return;
-            }
-        } else {
-            let Some(jump_time) = ctx.input.jumped.clone() else {
-                return;
-            };
-            if jump_time.elapsed() > ctx.cfg.jump_input_buffer {
-                return;
-            }
-            set_grounded(None, colliders, time, ctx, transform);
-            // set last_ground to coyote time to make it not jump again after jumping ungrounds us
-            ctx.state.last_ground.set_elapsed(ctx.cfg.coyote_time);
-            Vec3::Y
-        };
-    ctx.state.last_tac.reset();
+    let Some(ref jump_phase) = ctx.input.jump_phase else {
+        return;
+    };
 
-    ctx.input.jumped = None;
-    ctx.input.tac = None;
+    // todo: pull factor from last grounded surface.
+    let material_jump_factor = 1.0;
+    // todo: this could be a config?
+    let mut jump_direction = Vec3::Y;
 
-    // TODO: read ground's jump factor
-    let ground_factor = 1.0;
     // d = 0.5 * g * t^2		- distance traveled with linear accel
     // t = sqrt(2.0 * 45 / g)	- how long to fall 45 units
     // v = g * t				- velocity at the end (just invert it to jump up that high)
     // v = g * sqrt(2.0 * 45 / g )
     // v^2 = g * g * 2.0 * 45 / g
     // v = sqrt( g * 2.0 * 45 )
-    let fl_mul = (2.0 * ctx.cfg.gravity * ctx.cfg.jump_height).sqrt();
-    ctx.velocity.0 += jumpdir * ground_factor * fl_mul + Vec3::Y * ctx.state.platform_velocity.y;
-    if let Some(crane_input) = ctx.input.craned.as_mut() {
-        crane_input
-            .tick((ctx.cfg.crane_input_buffer - ctx.cfg.jump_crane_chain_time).max(Duration::ZERO));
+    fn jump_power(ctx: &CtxItem, material_jump_factor: f32) -> f32 {
+        (2.0 * ctx.cfg.gravity * ctx.cfg.jump_height).sqrt() * material_jump_factor
     }
 
-    // TODO: Trigger jump event
+    match jump_phase {
+        &JumpPhase::Start {
+            ref stopwatch,
+            needs_release,
+        } => {
+            let buffer_time_exceeded = stopwatch.elapsed() > ctx.cfg.jump_input_buffer;
+
+            if ctx.state.grounded.is_none() {
+                let coyote_time_exceeded = ctx.state.last_ground.elapsed() > ctx.cfg.coyote_time;
+
+                if coyote_time_exceeded {
+                    // Check for tic tac
+                    if let Some(dir) =
+                        handle_tac(wish_velocity, time, move_and_slide, ctx, transform)
+                            .or_else(|| handle_ledge_jump_dir(ctx))
+                    {
+                        jump_direction = dir;
+                        // (continue)
+                    } else
+                    // Check buffer time
+                    if buffer_time_exceeded {
+                        ctx.input.jump_phase = None;
+                        return;
+                    } else {
+                        // Keep the jump buffered
+                        return;
+                    }
+                }
+                // (continue)
+            } else if buffer_time_exceeded {
+                // Grounded, but jump buffer time is exceeded on the queued (maybe held) jump. Cancel jump.
+                ctx.input.jump_phase = None;
+                return;
+            }
+
+            ctx.state.last_tac.reset();
+            ctx.input.tac = None;
+            set_grounded(None, colliders, time, ctx, transform);
+            // Set last_ground to coyote time to make it not jump again after jumping ungrounds
+            ctx.state.last_ground.set_elapsed(ctx.cfg.coyote_time);
+
+            // Apply impulse once at the start of the jump.
+            let jump_power = jump_power(ctx, material_jump_factor);
+            let inherited_boost_y_velocity = ctx.state.platform_velocity.y.max(0.0);
+            ctx.velocity.0 += jump_power * jump_direction;
+            ctx.velocity.y += inherited_boost_y_velocity;
+
+            // If we have a crane input buffered, tick it here to ensure it applies immediately on jump and isn't delayed by a frame.
+            if let Some(crane_input) = ctx.input.craned.as_mut() {
+                crane_input.tick(
+                    (ctx.cfg.crane_input_buffer - ctx.cfg.jump_crane_chain_time)
+                        .max(Duration::ZERO),
+                );
+            }
+
+            // Transition to the next phase
+            ctx.input.jump_phase = Some(if needs_release {
+                JumpPhase::Release
+            } else {
+                JumpPhase::Hold
+            });
+
+            // TODO: Trigger jump start event
+        }
+        JumpPhase::Hold => {}
+        JumpPhase::Release => {
+            let time_since_grounded = ctx.state.last_ground.elapsed();
+            let jump_power = jump_power(ctx, material_jump_factor);
+            let time_to_apex = Duration::from_secs_f32(jump_power / ctx.cfg.gravity);
+
+            if ctx.state.grounded.is_none() && time_since_grounded < time_to_apex {
+                // We released the jump button before reaching the apex, so cut the jump short.
+                let inverse_hold = 1.0
+                    - (time_since_grounded.as_secs_f32() / time_to_apex.as_secs_f32())
+                        .clamp(0.0, 1.0);
+
+                ctx.velocity.y -= jump_power * inverse_hold * ctx.cfg.jump_release_cancel_factor;
+            }
+
+            ctx.input.jump_phase = None;
+            // TODO: Trigger jump release event
+        }
+    }
 }
 
 fn start_gravity(time: &Time, ctx: &mut CtxItem) {

@@ -188,6 +188,12 @@ pub struct CharacterController {
     pub move_and_slide: MoveAndSlideConfig,
     pub max_speed: f32,
     pub jump_height: f32,
+    /// A multiplier that determines how much remaining jump velocity is inversely applied to the
+    /// controller when a jump is released before reaching its apex.
+    ///
+    /// This allows for variable jump heights based on how long the jump input is held. Set this to
+    /// `0.0` to disable variable jump heights.
+    pub jump_release_cancel_factor: f32,
     pub tac_power: f32,
     pub tac_jump_factor: f32,
     pub tac_input_buffer: Duration,
@@ -197,7 +203,11 @@ pub struct CharacterController {
     pub max_air_wish_speed: f32,
     pub tac_cooldown: Duration,
     pub unground_speed: f32,
+    /// The maximum elapsed time after leaving the ground that will execute a queued jump as if the
+    /// character were still grounded. Longer durations are more forgiving.
     pub coyote_time: Duration,
+    /// The maximum elapsed time between queuing a jump (while not grounded) and becoming grounded,
+    /// that will allow the queued jump to execute once grounded.
     pub jump_input_buffer: Duration,
     pub jump_crane_chain_time: Duration,
     pub crane_input_buffer: Duration,
@@ -246,6 +256,7 @@ impl Default for CharacterController {
             },
             max_speed: 100.0,
             jump_height: 1.8,
+            jump_release_cancel_factor: 1.0,
             tac_power: 0.755,
             tac_jump_factor: 1.0,
             ledge_jump_power: 1.5,

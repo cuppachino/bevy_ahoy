@@ -156,7 +156,6 @@ impl PlayerInput {
                 ),
                 (
                     Action::<Jump>::new(),
-                    Press::default(),
                     bindings![
                         KeyCode::Space,
                         GamepadButton::South,
