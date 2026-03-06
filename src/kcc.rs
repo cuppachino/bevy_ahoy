@@ -1544,7 +1544,7 @@ fn handle_jump(
         JumpPhase::Release => {
             let time_since_grounded = ctx.state.last_ground.elapsed();
             let jump_power = jump_power(ctx, material_jump_factor);
-            let time_to_apex = Duration::from_secs_f32(jump_power / ctx.cfg.gravity);
+            let time_to_apex = Duration::from_secs_f32((jump_power / ctx.cfg.gravity).abs());
 
             if ctx.state.grounded.is_none() && time_since_grounded < time_to_apex {
                 // We released the jump button before reaching the apex, so cut the jump short.
