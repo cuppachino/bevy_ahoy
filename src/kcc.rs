@@ -10,10 +10,9 @@ use bevy_ecs::{
     system::lifetimeless::{Read, Write},
 };
 use bevy_math::Affine3A;
-use bevy_time::Stopwatch;
 use core::fmt::Debug;
 use core::time::Duration;
-use std::{ops::ControlFlow, sync::Arc};
+use std::sync::Arc;
 use tracing::{error, warn};
 
 use crate::{
