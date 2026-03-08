@@ -29,15 +29,16 @@ pub enum JumpTrigger {
 #[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum JumpActuation {
-    /*
-    TODO: Add an optional timeout behavior that disables buffered jumps after holding for too long while grounded.
     /// Do not modify the impulse based on hold duration before release.
     None {
+        /*
+        TODO: Add an optional timeout behavior that disables buffered jumps after holding for too long while grounded.
         /// The maximum amount of time a jump can be held while grounded before releasing the action
         /// will no longer trigger a jump.
         max_hold_time: Option<Duration>,
+        */
     },
-    */
+
     /// Enable variable jump heights based on the output of an easing curve and the duration of the hold.
     Curve(JumpActuationCurve),
 }
@@ -149,6 +150,21 @@ impl Default for JumpCancelMode {
 
 impl Default for JumpTrigger {
     fn default() -> Self {
+        Self::default_on_press()
+    }
+}
+
+impl JumpTrigger {
+    #[inline]
+    pub fn default_on_release() -> Self {
+        Self::OnRelease {
+            actuation: JumpActuation::Curve(JumpActuationCurve::default()),
+            cancel: Some(JumpCancelMode::default()),
+        }
+    }
+
+    #[inline]
+    pub fn default_on_press() -> Self {
         Self::OnPress(Some(JumpCancelMode::default()))
     }
 }
@@ -182,11 +198,11 @@ impl JumpCancelPreApex {
 
 impl JumpCancelPostApex {
     fn apply_impulse(&self, velocity: &mut LinearVelocity) {
-        match self {
-            &JumpCancelPostApex::Cancel(new_impulse) => {
+        match *self {
+            JumpCancelPostApex::Cancel(new_impulse) => {
                 velocity.y = new_impulse;
             }
-            &JumpCancelPostApex::Flat(flat) => velocity.y += flat,
+            JumpCancelPostApex::Flat(flat) => velocity.y += flat,
         }
     }
 }

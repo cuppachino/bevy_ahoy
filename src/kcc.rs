@@ -10,6 +10,7 @@ use bevy_ecs::{
     system::lifetimeless::{Read, Write},
 };
 use bevy_math::Affine3A;
+use bevy_time::Stopwatch;
 use core::fmt::Debug;
 use core::time::Duration;
 use std::{ops::ControlFlow, sync::Arc};
@@ -1510,7 +1511,7 @@ fn handle_jump(
             return ControlFlow::Break(Some(cancel_jump(needs_next)));
         }
 
-        return ControlFlow::Continue(None);
+        ControlFlow::Continue(None)
     }
 
     fn jump_impulse(ctx: &mut CtxItem, jump_direction: Vec3, material_jump_factor: f32) {
@@ -1727,6 +1728,9 @@ fn handle_jump(
             }
 
             match actuation {
+                JumpActuation::None {} => {
+                    ctx.state.jump_hold_time = None;
+                }
                 &JumpActuation::Curve(JumpActuationCurve {
                     charge_duration: max_hold_time,
                     ref curve,
@@ -1735,7 +1739,7 @@ fn handle_jump(
                         .state
                         .jump_hold_time
                         .as_ref()
-                        .map(|s| s.elapsed_secs())
+                        .map(Stopwatch::elapsed_secs)
                         .unwrap_or_default();
                     let t = elapsed / max_hold_time.as_secs_f32().max(0.001);
                     let curve_factor = curve.sample_clamped(t);

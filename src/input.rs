@@ -214,15 +214,13 @@ fn apply_global_movement(
 fn start_jump(jump: On<Start<Jump>>, mut accumulated_inputs: Query<&mut AccumulatedInput>) {
     if let Ok(mut accumulated_inputs) = accumulated_inputs.get_mut(jump.context) {
         match accumulated_inputs.jump_phase.as_mut() {
-            Some(JumpPhase::Start { needs_release, .. }) if *needs_release => {
+            Some(JumpPhase::Start { needs_release, .. }) => {
                 *needs_release = false;
             }
-            Some(JumpPhase::Release { needs_start, .. }) if *needs_start => {
+            Some(JumpPhase::Release { needs_start, .. }) => {
                 *needs_start = true;
             }
-            Some(_) => {
-                return;
-            }
+            Some(_) => {}
             None => {
                 accumulated_inputs.jump_phase = Some(JumpPhase::default());
             }
