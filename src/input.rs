@@ -124,30 +124,28 @@ pub struct AccumulatedInput {
 #[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
 pub enum JumpPhase {
-    /// Queued jump that hasn't been processed yet. The first time the kcc system sees this state,
-    /// it will apply the initial jump impulse and transition to either [`Hold`] or [`Release`]
-    /// depending on whether the jump input is still held.
-    ///
-    /// [`Hold`]: Self::Hold
-    /// [`Release`]: Self::Release
+    /// Queued jump start that hasn't been processed yet.
     Start {
         /// Time since the last jump input.
         stopwatch: Stopwatch,
         /// True if the jump has been released but hasn't been processed yet.
-        ///
-        /// This is used to prevent getting stuck in a [`Hold`] state after executing a buffered
-        /// tap jump while in the air.
-        ///
-        /// [`Hold`]: Self::Hold
         needs_release: bool,
     },
     /// The jump is held. No continuous velocity is applied while in this state.
     Hold,
-    /// The jump has been released but may need a downward impulse.
-    Release,
+    /// Queued jump release that hasn't been processed yet.
+    Release {
+        /// Time since the jump was released.
+        stopwatch: Stopwatch,
+        /// `true` if a jump was started before the kcc system had a chance to see this release.
+        needs_start: bool,
+    },
 }
 
 impl Default for JumpPhase {
+    /// Create a new [`JumpPhase`] in the [`Start`] state with `needs_release` set to `false`.
+    ///
+    /// [`Start`]: JumpPhase::Start
     fn default() -> Self {
         Self::Start {
             stopwatch: Stopwatch::new(),
@@ -163,10 +161,29 @@ impl JumpPhase {
     #[inline]
     pub fn tick(&mut self, delta: Duration) {
         match self {
-            JumpPhase::Start { stopwatch, .. } => {
+            JumpPhase::Start { stopwatch, .. } | JumpPhase::Release { stopwatch, .. } => {
                 stopwatch.tick(delta);
             }
-            JumpPhase::Hold | JumpPhase::Release => {}
+            JumpPhase::Hold => {}
+        }
+    }
+
+    /// Returns `true` if the jump phase is [`Hold`].
+    ///
+    /// [`Hold`]: JumpPhase::Hold
+    #[must_use]
+    pub fn is_hold(&self) -> bool {
+        matches!(self, Self::Hold)
+    }
+
+    /// Create a new [`JumpPhase`] in the [`Release`] state.
+    ///
+    /// [`Release`]: Self::Release
+    #[inline]
+    pub fn release(needs_start: bool) -> Self {
+        Self::Release {
+            needs_start,
+            stopwatch: Stopwatch::new(),
         }
     }
 }
@@ -196,10 +213,12 @@ fn apply_global_movement(
 
 fn start_jump(jump: On<Start<Jump>>, mut accumulated_inputs: Query<&mut AccumulatedInput>) {
     if let Ok(mut accumulated_inputs) = accumulated_inputs.get_mut(jump.context) {
-        accumulated_inputs.jump_phase = Some(JumpPhase::default());
-        /* match accumulated_inputs.jump_phase.as_mut() {
+        match accumulated_inputs.jump_phase.as_mut() {
             Some(JumpPhase::Start { needs_release, .. }) if *needs_release => {
                 *needs_release = false;
+            }
+            Some(JumpPhase::Release { needs_start, .. }) if *needs_start => {
+                *needs_start = true;
             }
             Some(_) => {
                 return;
@@ -207,7 +226,7 @@ fn start_jump(jump: On<Start<Jump>>, mut accumulated_inputs: Query<&mut Accumula
             None => {
                 accumulated_inputs.jump_phase = Some(JumpPhase::default());
             }
-        } */
+        }
     }
 }
 
@@ -222,9 +241,11 @@ fn release_jump(jump: On<Complete<Jump>>, mut accumulated_inputs: Query<&mut Acc
                 *needs_release = true;
             }
             JumpPhase::Hold => {
-                *phase = JumpPhase::Release;
+                *phase = JumpPhase::release(false);
             }
-            JumpPhase::Release => {}
+            JumpPhase::Release { needs_start, .. } => {
+                *needs_start = false;
+            }
         }
     }
 }

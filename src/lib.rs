@@ -22,6 +22,10 @@ pub mod prelude {
             Climbdown, Crane, Crouch, GlobalMovement, Jump, Mantle, Movement, RotateCamera, SwimUp,
             Tac, YankCamera,
         },
+        jump::{
+            JumpActuation, JumpActuationCurve, JumpCancelMode, JumpCancelPostApex,
+            JumpCancelPreApex, JumpTrigger,
+        },
         water::{Water, WaterLevel, WaterState},
     };
 
@@ -63,6 +67,7 @@ pub mod camera;
 mod dynamics;
 mod fixed_update_utils;
 pub mod input;
+pub mod jump;
 mod kcc;
 #[cfg(feature = "pickup")]
 mod pickup_glue;
@@ -146,7 +151,7 @@ pub enum AhoySystems {
     ApplyForcesToDynamicRigidBodies,
 }
 
-#[derive(Component, Clone, Reflect, PartialEq, Debug)]
+#[derive(Component, Clone, Reflect, Debug)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
 #[reflect(Component)]
@@ -187,13 +192,9 @@ pub struct CharacterController {
     pub air_speed: f32,
     pub move_and_slide: MoveAndSlideConfig,
     pub max_speed: f32,
+    /// The peak height of a jump.
     pub jump_height: f32,
-    /// A multiplier that determines how much remaining jump velocity is inversely applied to the
-    /// controller when a jump is released before reaching its apex.
-    ///
-    /// This allows for variable jump heights based on how long the jump input is held. Set this to
-    /// `0.0` to disable variable jump heights.
-    pub jump_release_cancel_factor: f32,
+    pub jump_trigger: JumpTrigger,
     pub tac_power: f32,
     pub tac_jump_factor: f32,
     pub tac_input_buffer: Duration,
@@ -256,7 +257,7 @@ impl Default for CharacterController {
             },
             max_speed: 100.0,
             jump_height: 1.8,
-            jump_release_cancel_factor: 1.0,
+            jump_trigger: JumpTrigger::default(),
             tac_power: 0.755,
             tac_jump_factor: 1.0,
             ledge_jump_power: 1.5,
@@ -353,6 +354,7 @@ pub struct CharacterControllerState {
     pub last_tac: Stopwatch,
     pub last_step_up: Stopwatch,
     pub last_step_down: Stopwatch,
+    pub jump_hold_time: Option<Stopwatch>,
     pub crane_height_left: Option<f32>,
     /// The current state of the mantle, if a mantle is in progress.
     ///
@@ -373,6 +375,7 @@ impl Default for CharacterControllerState {
             last_tac: max_stopwatch(),
             last_step_up: max_stopwatch(),
             last_step_down: max_stopwatch(),
+            jump_hold_time: None,
             crane_height_left: None,
             mantle: None,
         }

@@ -12,13 +12,14 @@ use bevy_ecs::{
 use bevy_math::Affine3A;
 use core::fmt::Debug;
 use core::time::Duration;
-use std::sync::Arc;
+use std::{ops::ControlFlow, sync::Arc};
 use tracing::{error, warn};
 
 use crate::{
     CharacterControllerDerivedProps, CharacterControllerOutput, CharacterControllerState,
     CharacterLook, MantleOutput, MantleState,
     input::{AccumulatedInput, JumpPhase},
+    jump::JumpTrigger,
     prelude::*,
 };
 
@@ -104,7 +105,7 @@ fn setup_collider(
 
 #[derive(QueryData)]
 #[query_data(mutable, derive(Debug))]
-struct Ctx {
+pub(crate) struct Ctx {
     entity: Entity,
     velocity: Write<LinearVelocity>,
     state: Write<CharacterControllerState>,
@@ -1476,87 +1477,278 @@ fn handle_jump(
         (2.0 * ctx.cfg.gravity * ctx.cfg.jump_height).sqrt() * material_jump_factor
     }
 
-    match jump_phase {
-        &JumpPhase::Start {
-            ref stopwatch,
-            needs_release,
-        } => {
-            let buffer_time_exceeded = stopwatch.elapsed() > ctx.cfg.jump_input_buffer;
+    fn transition_phase(
+        ctx: &mut CtxItem,
+        wish_velocity: Vec3,
+        time: &Time,
+        move_and_slide: &MoveAndSlide,
+        transform: &mut Transform,
+        stopwatch_duration: Duration,
+        cancel_jump: fn(bool) -> Option<JumpPhase>,
+        needs_next: bool,
+    ) -> ControlFlow<Option<Option<JumpPhase>>, Option<Vec3>> {
+        let buffer_time_exceeded = stopwatch_duration > ctx.cfg.jump_input_buffer;
 
-            if ctx.state.grounded.is_none() {
-                let coyote_time_exceeded = ctx.state.last_ground.elapsed() > ctx.cfg.coyote_time;
+        if ctx.state.grounded.is_none() {
+            let coyote_time_is_not_helpful = ctx.state.last_ground.elapsed() > ctx.cfg.coyote_time;
 
-                if coyote_time_exceeded {
-                    // Check for tic tac
-                    if let Some(dir) =
-                        handle_tac(wish_velocity, time, move_and_slide, ctx, transform)
-                            .or_else(|| handle_ledge_jump_dir(ctx))
-                    {
-                        jump_direction = dir;
-                        // (continue)
-                    } else
-                    // Check buffer time
-                    if buffer_time_exceeded {
-                        ctx.input.jump_phase = None;
+            if coyote_time_is_not_helpful {
+                if let Some(dir) = handle_tac(wish_velocity, time, move_and_slide, ctx, transform)
+                    .or_else(|| handle_ledge_jump_dir(ctx))
+                {
+                    return ControlFlow::Continue(Some(dir));
+                } else if buffer_time_exceeded {
+                    // All assists are expired, so transition to the next phase.
+                    return ControlFlow::Break(Some(cancel_jump(needs_next)));
+                }
+
+                // Keep the current state
+                return ControlFlow::Break(None);
+            }
+        } else if buffer_time_exceeded {
+            // We're grounded, but the jump buffer time is exceeded, so cancel the jump input.
+            return ControlFlow::Break(Some(cancel_jump(needs_next)));
+        }
+
+        return ControlFlow::Continue(None);
+    }
+
+    fn jump_impulse(ctx: &mut CtxItem, jump_direction: Vec3, material_jump_factor: f32) {
+        // Set last_ground to coyote time to make it not jump again after jumping ungrounds
+        ctx.state.last_ground.set_elapsed(ctx.cfg.coyote_time);
+        ctx.state.last_tac.reset();
+        ctx.input.tac = None;
+
+        // Apply impulse once at the start of the jump.
+        let jump_power = jump_power(ctx, material_jump_factor);
+        let inherited_boost_y_velocity = ctx.state.platform_velocity.y.max(0.0);
+        ctx.velocity.0 += jump_power * jump_direction;
+        ctx.velocity.y += inherited_boost_y_velocity;
+
+        // If we have a crane input buffered, tick it here to ensure it applies immediately on jump and isn't delayed by a frame.
+        if let Some(crane_input) = ctx.input.craned.as_mut() {
+            crane_input.tick(
+                (ctx.cfg.crane_input_buffer - ctx.cfg.jump_crane_chain_time).max(Duration::ZERO),
+            );
+        }
+    }
+
+    if jump_phase.is_hold() {
+        ctx.state
+            .jump_hold_time
+            .as_mut()
+            .expect("if jump_phase is in hold, we should have a jump_hold_time")
+            .tick(time.delta());
+        return;
+    }
+
+    let jump_phase = jump_phase.clone();
+
+    match &ctx.cfg.jump_trigger {
+        JumpTrigger::OnPress(cancel_cfg) => {
+            match jump_phase {
+                JumpPhase::Hold => unreachable!(),
+                JumpPhase::Start {
+                    stopwatch,
+                    needs_release,
+                } => {
+                    let start_duration = stopwatch.elapsed();
+                    ctx.state.jump_hold_time = Some(stopwatch);
+                    match transition_phase(
+                        ctx,
+                        wish_velocity,
+                        time,
+                        move_and_slide,
+                        transform,
+                        start_duration,
+                        |_| None,
+                        needs_release,
+                    ) {
+                        ControlFlow::Break(None) => {
+                            // Stay in start phase
+                            return;
+                        }
+                        ControlFlow::Break(Some(phase)) => {
+                            ctx.input.jump_phase = phase;
+                            return;
+                        }
+                        ControlFlow::Continue(Some(dir)) => {
+                            jump_direction = dir;
+                        }
+                        ControlFlow::Continue(None) => {
+                            set_grounded(None, colliders, time, ctx, transform);
+                        }
+                    }
+
+                    jump_impulse(ctx, jump_direction, material_jump_factor);
+
+                    ctx.input.jump_phase = Some(if needs_release {
+                        JumpPhase::release(false)
+                    } else {
+                        JumpPhase::Hold
+                    });
+
+                    // TODO: Trigger jump begin event
+                }
+                JumpPhase::Release { needs_start, .. } => {
+                    if let Some(release_cfg) = cancel_cfg {
+                        let is_grounded = ctx.state.grounded.is_some();
+                        let time_since_grounded = ctx.state.last_ground.elapsed();
+                        let jump_power = jump_power(ctx, material_jump_factor);
+
+                        release_cfg.handle_cancel(
+                            &mut ctx.velocity,
+                            jump_power,
+                            ctx.cfg.gravity,
+                            is_grounded,
+                            time_since_grounded,
+                        );
+                    };
+
+                    ctx.state.jump_hold_time = None;
+
+                    // Clear the jump phase.
+                    ctx.input.jump_phase = if needs_start {
+                        Some(JumpPhase::default())
+                    } else {
+                        None
+                    };
+
+                    // TODO: Trigger jump finish event
+                }
+            }
+        }
+        JumpTrigger::OnRelease { actuation, cancel } => {
+            match jump_phase {
+                JumpPhase::Hold => unreachable!(),
+                JumpPhase::Start {
+                    stopwatch,
+                    needs_release,
+                } => {
+                    let start_duration = stopwatch.elapsed();
+                    ctx.state.jump_hold_time = Some(stopwatch);
+
+                    if needs_release {
+                        match transition_phase(
+                            ctx,
+                            wish_velocity,
+                            time,
+                            move_and_slide,
+                            transform,
+                            start_duration,
+                            |_| None,
+                            needs_release,
+                        ) {
+                            ControlFlow::Break(None) => {
+                                // Move to release phase since we are released.
+                                ctx.input.jump_phase = Some(JumpPhase::release(false));
+                                ctx.state.jump_hold_time = None;
+                                return;
+                            }
+                            ControlFlow::Break(Some(next_phase)) => {
+                                ctx.input.jump_phase = next_phase;
+                                return;
+                            }
+                            ControlFlow::Continue(Some(dir)) => {
+                                jump_direction = dir;
+                            }
+                            ControlFlow::Continue(None) => {
+                                set_grounded(None, colliders, time, ctx, transform);
+                            }
+                        }
+                        // pass through to apply the jump impulse immediately on release
+                    } else if let Some(press_cfg) = cancel {
+                        let is_grounded = ctx.state.grounded.is_some();
+                        let time_since_grounded = ctx.state.last_ground.elapsed();
+                        let jump_power = jump_power(ctx, material_jump_factor);
+
+                        press_cfg.handle_cancel(
+                            &mut ctx.velocity,
+                            jump_power,
+                            ctx.cfg.gravity,
+                            is_grounded,
+                            time_since_grounded,
+                        );
+
+                        // TODO: Trigger jump finish event
+
+                        // We canceled the jump by pressing the button again, so move to hold.
+                        ctx.input.jump_phase = Some(JumpPhase::Hold);
                         return;
                     } else {
-                        // Keep the jump buffered
+                        // If we don't need to release, then we can move to hold.
+                        ctx.input.jump_phase = Some(JumpPhase::Hold);
+
                         return;
                     }
                 }
-                // (continue)
-            } else if buffer_time_exceeded {
-                // Grounded, but jump buffer time is exceeded on the queued (maybe held) jump. Cancel jump.
-                ctx.input.jump_phase = None;
-                return;
+                JumpPhase::Release {
+                    stopwatch,
+                    needs_start,
+                } => {
+                    match transition_phase(
+                        ctx,
+                        wish_velocity,
+                        time,
+                        move_and_slide,
+                        transform,
+                        stopwatch.elapsed(),
+                        |needs_start| {
+                            if needs_start {
+                                Some(JumpPhase::default())
+                            } else {
+                                None
+                            }
+                        },
+                        needs_start,
+                    ) {
+                        ControlFlow::Break(None) => {
+                            // Stay in release phase
+                            return;
+                        }
+                        ControlFlow::Break(Some(next_phase)) => {
+                            ctx.input.jump_phase = next_phase;
+                            return;
+                        }
+                        ControlFlow::Continue(Some(dir)) => {
+                            jump_direction = dir;
+                        }
+                        ControlFlow::Continue(None) => {
+                            set_grounded(None, colliders, time, ctx, transform);
+                        }
+                    }
+
+                    ctx.input.jump_phase = if needs_start {
+                        Some(JumpPhase::default())
+                    } else {
+                        None
+                    };
+                }
             }
 
-            ctx.state.last_tac.reset();
-            ctx.input.tac = None;
-            set_grounded(None, colliders, time, ctx, transform);
-            // Set last_ground to coyote time to make it not jump again after jumping ungrounds
-            ctx.state.last_ground.set_elapsed(ctx.cfg.coyote_time);
+            match actuation {
+                &JumpActuation::Curve(JumpActuationCurve {
+                    charge_duration: max_hold_time,
+                    ref curve,
+                }) => {
+                    let elapsed = ctx
+                        .state
+                        .jump_hold_time
+                        .as_ref()
+                        .map(|s| s.elapsed_secs())
+                        .unwrap_or_default();
+                    let t = elapsed / max_hold_time.as_secs_f32().max(0.001);
+                    let curve_factor = curve.sample_clamped(t);
 
-            // Apply impulse once at the start of the jump.
-            let jump_power = jump_power(ctx, material_jump_factor);
-            let inherited_boost_y_velocity = ctx.state.platform_velocity.y.max(0.0);
-            ctx.velocity.0 += jump_power * jump_direction;
-            ctx.velocity.y += inherited_boost_y_velocity;
+                    jump_direction *= curve_factor;
 
-            // If we have a crane input buffered, tick it here to ensure it applies immediately on jump and isn't delayed by a frame.
-            if let Some(crane_input) = ctx.input.craned.as_mut() {
-                crane_input.tick(
-                    (ctx.cfg.crane_input_buffer - ctx.cfg.jump_crane_chain_time)
-                        .max(Duration::ZERO),
-                );
+                    ctx.state.jump_hold_time = None;
+                }
             }
 
-            // Transition to the next phase
-            ctx.input.jump_phase = Some(if needs_release {
-                JumpPhase::Release
-            } else {
-                JumpPhase::Hold
-            });
+            jump_impulse(ctx, jump_direction, material_jump_factor);
 
-            // TODO: Trigger jump start event
-        }
-        JumpPhase::Hold => {}
-        JumpPhase::Release => {
-            let time_since_grounded = ctx.state.last_ground.elapsed();
-            let jump_power = jump_power(ctx, material_jump_factor);
-            let time_to_apex = Duration::from_secs_f32((jump_power / ctx.cfg.gravity).abs());
-
-            if ctx.state.grounded.is_none() && time_since_grounded < time_to_apex {
-                // We released the jump button before reaching the apex, so cut the jump short.
-                let inverse_hold = 1.0
-                    - (time_since_grounded.as_secs_f32() / time_to_apex.as_secs_f32())
-                        .clamp(0.0, 1.0);
-
-                ctx.velocity.y -= jump_power * inverse_hold * ctx.cfg.jump_release_cancel_factor;
-            }
-
-            ctx.input.jump_phase = None;
-            // TODO: Trigger jump release event
+            // todo: trigger jump event.
         }
     }
 }
