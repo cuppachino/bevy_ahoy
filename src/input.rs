@@ -132,13 +132,18 @@ pub enum JumpPhase {
         needs_release: bool,
     },
     /// The jump is held. No continuous velocity is applied while in this state.
-    Hold,
+    Hold {
+        /// Time since the jump first entered [`Start`].
+        stopwatch: Stopwatch,
+    },
     /// Queued jump release that hasn't been processed yet.
     Release {
         /// Time since the jump was released.
         stopwatch: Stopwatch,
         /// `true` if a jump was started before the kcc system had a chance to see this release.
         needs_start: bool,
+        /// The duration of the hold before release.
+        held_duration: Duration,
     },
 }
 
@@ -155,16 +160,21 @@ impl Default for JumpPhase {
 }
 
 impl JumpPhase {
-    /// Tick the internal stopwatch if the jump is in the [`Start`] phase.
-    ///
-    /// [`Start`]: Self::Start
     #[inline]
     pub fn tick(&mut self, delta: Duration) {
         match self {
-            JumpPhase::Start { stopwatch, .. } | JumpPhase::Release { stopwatch, .. } => {
+            JumpPhase::Start {
+                needs_release: true,
+                ..
+            }
+            | JumpPhase::Release {
+                needs_start: true, ..
+            } => {}
+            JumpPhase::Start { stopwatch, .. }
+            | JumpPhase::Hold { stopwatch }
+            | JumpPhase::Release { stopwatch, .. } => {
                 stopwatch.tick(delta);
             }
-            JumpPhase::Hold => {}
         }
     }
 
@@ -173,17 +183,18 @@ impl JumpPhase {
     /// [`Hold`]: JumpPhase::Hold
     #[must_use]
     pub fn is_hold(&self) -> bool {
-        matches!(self, Self::Hold)
+        matches!(self, Self::Hold { .. })
     }
 
     /// Create a new [`JumpPhase`] in the [`Release`] state.
     ///
     /// [`Release`]: Self::Release
     #[inline]
-    pub fn release(needs_start: bool) -> Self {
+    pub fn release(needs_start: bool, held_duration: Duration) -> Self {
         Self::Release {
             needs_start,
             stopwatch: Stopwatch::new(),
+            held_duration,
         }
     }
 }
@@ -238,8 +249,8 @@ fn release_jump(jump: On<Complete<Jump>>, mut accumulated_inputs: Query<&mut Acc
             JumpPhase::Start { needs_release, .. } => {
                 *needs_release = true;
             }
-            JumpPhase::Hold => {
-                *phase = JumpPhase::release(false);
+            JumpPhase::Hold { stopwatch } => {
+                *phase = JumpPhase::release(false, stopwatch.elapsed());
             }
             JumpPhase::Release { needs_start, .. } => {
                 *needs_start = false;

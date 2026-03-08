@@ -172,37 +172,33 @@ impl JumpTrigger {
 impl JumpCancelPreApex {
     fn apply_impulse(
         &self,
-        velocity: &mut LinearVelocity,
+        y_velocity: f32,
         jump_power: f32,
         time_since_grounded: Duration,
         time_to_apex: Duration,
-    ) {
+    ) -> f32 {
         let apex_completion = time_since_grounded.as_secs_f32() / time_to_apex.as_secs_f32();
         let inverse_completion = 1.0 - apex_completion.clamp(0.0, 1.0);
 
         match self {
-            &JumpCancelPreApex::Cancel(new_impulse) => {
-                velocity.y = new_impulse;
-            }
+            &JumpCancelPreApex::Cancel(new_impulse) => new_impulse,
             JumpCancelPreApex::Hop(curve) => {
                 if let Some(hop_multiplier) = curve.sample(inverse_completion) {
-                    velocity.y -= jump_power * hop_multiplier;
+                    y_velocity - jump_power * hop_multiplier
+                } else {
+                    y_velocity
                 }
             }
-            JumpCancelPreApex::Mul(factor) => {
-                velocity.y -= jump_power * inverse_completion * factor;
-            }
+            JumpCancelPreApex::Mul(factor) => y_velocity - jump_power * inverse_completion * factor,
         }
     }
 }
 
 impl JumpCancelPostApex {
-    fn apply_impulse(&self, velocity: &mut LinearVelocity) {
+    fn apply_impulse(&self, velocity_y: f32) -> f32 {
         match *self {
-            JumpCancelPostApex::Cancel(new_impulse) => {
-                velocity.y = new_impulse;
-            }
-            JumpCancelPostApex::Flat(flat) => velocity.y += flat,
+            JumpCancelPostApex::Cancel(new_impulse) => new_impulse,
+            JumpCancelPostApex::Flat(flat) => velocity_y + flat,
         }
     }
 }
@@ -210,25 +206,25 @@ impl JumpCancelPostApex {
 impl JumpCancelMode {
     pub(crate) fn handle_cancel(
         &self,
-        velocity: &mut LinearVelocity,
+        mut lin_velocity_y: f32,
         jump_power: f32,
         gravity: f32,
         is_grounded: bool,
         time_since_grounded: Duration,
-    ) {
+    ) -> Option<f32> {
         if is_grounded {
-            return;
+            return None;
         }
 
         if self.pre_apex.is_none() && self.post_apex.is_none() {
-            return;
+            return None;
         }
 
         // Directional threshold check. Supports clamped boosting in either direction.
         if let Some(threshold) = self.threshold {
             let signum = threshold.signum();
-            if velocity.y * signum > threshold * signum {
-                return;
+            if lin_velocity_y * signum > threshold * signum {
+                return None;
             }
         }
 
@@ -238,21 +234,28 @@ impl JumpCancelMode {
         if time_since_grounded < time_to_apex
             && let Some(ref pre_apex) = self.pre_apex
         {
-            pre_apex.apply_impulse(velocity, jump_power, time_since_grounded, time_to_apex);
+            lin_velocity_y = pre_apex.apply_impulse(
+                lin_velocity_y,
+                jump_power,
+                time_since_grounded,
+                time_to_apex,
+            );
         } else
         // Post-apex release
         if let Some(ref post_apex) = self.post_apex {
-            post_apex.apply_impulse(velocity);
+            lin_velocity_y = post_apex.apply_impulse(lin_velocity_y);
         };
 
         // Clamp to threshold after applying impulse
         if let Some(threshold) = self.threshold {
             let signum = threshold.signum();
-            velocity.y = if signum > 0.0 {
-                velocity.y.min(threshold)
+            lin_velocity_y = if signum > 0.0 {
+                lin_velocity_y.min(threshold)
             } else {
-                velocity.y.max(threshold)
+                lin_velocity_y.max(threshold)
             };
         }
+
+        Some(lin_velocity_y)
     }
 }

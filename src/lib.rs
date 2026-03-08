@@ -354,7 +354,6 @@ pub struct CharacterControllerState {
     pub last_tac: Stopwatch,
     pub last_step_up: Stopwatch,
     pub last_step_down: Stopwatch,
-    pub jump_hold_time: Option<Stopwatch>,
     pub crane_height_left: Option<f32>,
     /// The current state of the mantle, if a mantle is in progress.
     ///
@@ -375,7 +374,6 @@ impl Default for CharacterControllerState {
             last_tac: max_stopwatch(),
             last_step_up: max_stopwatch(),
             last_step_down: max_stopwatch(),
-            jump_hold_time: None,
             crane_height_left: None,
             mantle: None,
         }
