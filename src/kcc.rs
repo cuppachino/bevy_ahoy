@@ -1715,7 +1715,7 @@ fn handle_jump_on_release(
 
             // Keep holding unless the action was already released.
             ctx.input.jump_phase = Some(if needs_release {
-                JumpPhase::release(true, stopwatch.elapsed())
+                JumpPhase::release(false, stopwatch.elapsed())
             } else {
                 JumpPhase::Hold {
                     stopwatch: stopwatch.clone(),
@@ -1732,11 +1732,11 @@ fn handle_jump_on_release(
 
             match control_flow {
                 JumpPhaseControlFlow::Continue => {
-                    // Just continue with the regular jump logic below.
+                    // continue with a regular jump.
                     set_grounded(None, ctx.colliders, ctx.time, ctx.ctx, ctx.transform);
                 }
                 JumpPhaseControlFlow::TacOrLedgeJump(new_dir) => {
-                    // Perform a tac or ledge jump instead of a regular jump.
+                    // Continue to perform a tac or ledge jump.
                     jump_direction = new_dir;
                 }
                 JumpPhaseControlFlow::StayInCurrentPhase => {
