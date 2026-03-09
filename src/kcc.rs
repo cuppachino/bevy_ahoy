@@ -1501,21 +1501,35 @@ fn handle_jump<'a, 'w, 's>(
         colliders,
     };
 
-    match &jump_ctx.ctx.cfg.jump_trigger {
-        JumpTrigger::OnPress(cancel) => handle_jump_on_press(
-            &mut jump_ctx,
-            cancel.as_ref(),
-            jump_direction,
-            material_jump_factor,
-        ),
-        JumpTrigger::OnRelease { actuation, cancel } => {
-            handle_jump_on_release(
+    #[cfg(any(debug_assertions, feature = "debug_ahoy_assert"))]
+    let mut iteration = 0;
+
+    loop {
+        if let Ok(_) = match &jump_ctx.ctx.cfg.jump_trigger {
+            JumpTrigger::OnPress(cancel) => handle_jump_on_press(
+                &mut jump_ctx,
+                cancel.as_ref(),
+                jump_direction,
+                material_jump_factor,
+            ),
+            JumpTrigger::OnRelease { actuation, cancel } => handle_jump_on_release(
                 &mut jump_ctx,
                 actuation,
                 cancel.as_ref(),
                 jump_direction,
                 material_jump_factor,
-            );
+            ),
+        } {
+            break;
+        }
+
+        #[cfg(any(debug_assertions, feature = "debug_ahoy_assert"))]
+        {
+            iteration += 1;
+            assert!(
+                iteration <= 2,
+                "JumpPhase handling is looping! `needs_start` and `needs_relesae` are implemented incorrectly!"
+            )
         }
     }
 }
@@ -1543,6 +1557,8 @@ enum JumpPhaseControlFlow {
     /// Continue
     Continue,
 }
+
+struct Rerun;
 
 fn transition_jump_phase(
     ctx: &mut JumpCtxItem,
@@ -1587,9 +1603,11 @@ fn handle_jump_on_press(
     cancel_cfg: Option<&JumpCancelMode>,
     mut jump_direction: Vec3,
     material_jump_factor: f32,
-) {
+) -> Result<(), Rerun> {
+    let mut res = Ok(());
+
     let Some(ref jump_phase) = ctx.input.jump_phase else {
-        return;
+        return res;
     };
 
     let mut new_velocity_y = None;
@@ -1597,7 +1615,7 @@ fn handle_jump_on_press(
     match jump_phase {
         JumpPhase::Hold { .. } => {
             // Do nothing, just keep holding the jump.
-            return;
+            return res;
         }
         &JumpPhase::Start {
             ref stopwatch,
@@ -1618,7 +1636,7 @@ fn handle_jump_on_press(
                 }
                 JumpPhaseControlFlow::StayInCurrentPhase => {
                     // Stay in start phase until assists expire.
-                    return;
+                    return res;
                 }
                 JumpPhaseControlFlow::Expire => {
                     ctx.input.jump_phase = if needs_release {
@@ -1626,7 +1644,7 @@ fn handle_jump_on_press(
                     } else {
                         None
                     };
-                    return;
+                    return res;
                 }
             }
 
@@ -1635,6 +1653,7 @@ fn handle_jump_on_press(
 
             // Transition to hold or release depending on whether the action was already released.
             ctx.input.jump_phase = Some(if needs_release {
+                res = Err(Rerun);
                 JumpPhase::release(false, start_duration)
             } else {
                 JumpPhase::Hold { stopwatch }
@@ -1642,7 +1661,7 @@ fn handle_jump_on_press(
 
             // TODO: Trigger jump BEGIN event
 
-            return;
+            return res;
         }
         JumpPhase::Release { needs_start, .. } => {
             if let Some(release_cfg) = cancel_cfg {
@@ -1661,6 +1680,7 @@ fn handle_jump_on_press(
 
             // Clear the jump phase.
             ctx.input.jump_phase = if *needs_start {
+                res = Err(Rerun);
                 Some(JumpPhase::default())
             } else {
                 None
@@ -1673,6 +1693,8 @@ fn handle_jump_on_press(
     if let Some(new_velocity_y) = new_velocity_y {
         ctx.velocity.y = new_velocity_y;
     }
+
+    res
 }
 
 fn handle_jump_on_release(
@@ -1681,9 +1703,11 @@ fn handle_jump_on_release(
     cancel_cfg: Option<&JumpCancelMode>,
     mut jump_direction: Vec3,
     material_jump_factor: f32,
-) {
+) -> Result<(), Rerun> {
+    let mut res = Ok(());
+
     let Some(ref jump_phase) = ctx.input.jump_phase else {
-        return;
+        return res;
     };
 
     let mut new_velocity_y = None;
@@ -1691,7 +1715,7 @@ fn handle_jump_on_release(
     match jump_phase {
         JumpPhase::Hold { .. } => {
             // Do nothing, just keep holding the jump.
-            return;
+            return res;
         }
         &JumpPhase::Start {
             ref stopwatch,
@@ -1715,6 +1739,7 @@ fn handle_jump_on_release(
 
             // Keep holding unless the action was already released.
             ctx.input.jump_phase = Some(if needs_release {
+                res = Err(Rerun);
                 JumpPhase::release(false, stopwatch.elapsed())
             } else {
                 JumpPhase::Hold {
@@ -1741,7 +1766,7 @@ fn handle_jump_on_release(
                 }
                 JumpPhaseControlFlow::StayInCurrentPhase => {
                     // Stay in release phase until assists expire.
-                    return;
+                    return res;
                 }
                 JumpPhaseControlFlow::Expire => {
                     ctx.input.jump_phase = if needs_start {
@@ -1749,7 +1774,7 @@ fn handle_jump_on_release(
                     } else {
                         None
                     };
-                    return;
+                    return res;
                 }
             }
 
@@ -1775,6 +1800,7 @@ fn handle_jump_on_release(
 
             // Transition phase
             ctx.input.jump_phase = if needs_start {
+                res = Err(Rerun);
                 Some(JumpPhase::default())
             } else {
                 None
@@ -1787,6 +1813,8 @@ fn handle_jump_on_release(
     if let Some(new_velocity_y) = new_velocity_y {
         ctx.velocity.y = new_velocity_y;
     }
+
+    res
 }
 
 fn start_gravity(time: &Time, ctx: &mut CtxItem) {
